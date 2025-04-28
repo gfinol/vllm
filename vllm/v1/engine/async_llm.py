@@ -194,7 +194,7 @@ class AsyncLLM(EngineClient):
         queue = RequestOutputCollector(output_kind=params.output_kind)
 
         # Convert Input --> Request.
-        request = self.processor.process_inputs(request_id, prompt, params,
+        request = await self.processor.process_inputs_async(request_id, prompt, params,
                                                 arrival_time, lora_request,
                                                 trace_headers,
                                                 prompt_adapter_request,
