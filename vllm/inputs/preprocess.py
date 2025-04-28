@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import time
 from collections.abc import Mapping
 from typing import Optional, Union, cast
 
+import ray
 from typing_extensions import assert_never
 
 from vllm.config import ModelConfig
@@ -18,6 +20,7 @@ from vllm.transformers_utils.tokenizer_group import BaseTokenizerGroup
 from .data import (DecoderOnlyInputs, EncoderDecoderInputs, ProcessorInputs,
                    PromptType, SingletonInputs, SingletonPrompt, token_inputs)
 from .parse import is_explicit_encoder_decoder_prompt, parse_singleton_prompt
+from ..multimodal.processing import BaseMultiModalProcessor, BaseProcessingInfo
 
 logger = init_logger(__name__)
 
@@ -244,6 +247,23 @@ class InputPreprocessor:
                 )
 
         return can_process_multimodal
+    @staticmethod
+    @ray.remote
+    def offload_multimodal_processor(mm_processor: BaseMultiModalProcessor[BaseProcessingInfo], prompt: Union[str, list[int]],
+                                     mm_data: MultiModalDataDict,
+                                     hf_processor_mm_kwargs: Mapping[str, object],
+                                     return_mm_hashes: bool = False,
+                                     sleep_seconds: float = 0,
+                                     dummy_data: bytes = b""
+                                     ) -> MultiModalInputs:
+        """
+        Offload the multi-modal processor to a Ray task.
+        """
+        time.sleep(sleep_seconds)
+        return mm_processor.apply(prompt, mm_data, hf_processor_mm_kwargs,
+                                  return_mm_hashes)
+
+
 
     def _process_multimodal(
         self,
@@ -272,8 +292,10 @@ class InputPreprocessor:
         if mm_processor_kwargs is None:
             mm_processor_kwargs = {}
 
-        return mm_processor.apply(prompt, mm_data, mm_processor_kwargs,
-                                  return_mm_hashes)
+        logger.info("Calling multi-modal processor from _process_multimodal function in InputPreprocessor")
+        # return mm_processor.apply(prompt, mm_data, mm_processor_kwargs, return_mm_hashes)
+        mm_inputs = InputPreprocessor.offload_multimodal_processor.remote(mm_processor, prompt, mm_data, mm_processor_kwargs, return_mm_hashes)
+        return ray.get(mm_inputs)
 
     async def _process_multimodal_async(
         self,
@@ -298,9 +320,9 @@ class InputPreprocessor:
                                                          tokenizer=tokenizer)
         if mm_processor_kwargs is None:
             mm_processor_kwargs = {}
-
-        return mm_processor.apply(prompt, mm_data, mm_processor_kwargs,
-                                  return_mm_hashes)
+        # return mm_processor.apply(prompt, mm_data, mm_processor_kwargs, return_mm_hashes)
+        mm_inputs = await InputPreprocessor.offload_multimodal_processor.remote(mm_processor, prompt, mm_data, mm_processor_kwargs, return_mm_hashes)
+        return mm_inputs
 
     def _prompt_to_llm_inputs(
         self,
