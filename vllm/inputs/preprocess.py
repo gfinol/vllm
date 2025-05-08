@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import os
 import time
 from collections.abc import Mapping
 from typing import Optional, Union, cast
@@ -38,6 +39,7 @@ class InputPreprocessor:
         self.model_config = model_config
         self.tokenizer = tokenizer
         self.mm_registry = mm_registry
+        self.offload_to_ray = os.getenv("VLLM_OFFLOAD_TO_RAY", "0") != "0"
 
     def get_tokenizer_group(self) -> BaseTokenizerGroup:
         if self.tokenizer is None:
@@ -293,9 +295,12 @@ class InputPreprocessor:
             mm_processor_kwargs = {}
 
         logger.info("Calling multi-modal processor from _process_multimodal function in InputPreprocessor")
-        # return mm_processor.apply(prompt, mm_data, mm_processor_kwargs, return_mm_hashes)
-        mm_inputs = InputPreprocessor.offload_multimodal_processor.remote(mm_processor, prompt, mm_data, mm_processor_kwargs, return_mm_hashes)
-        return ray.get(mm_inputs)
+
+        if self.offload_to_ray:
+            mm_inputs = InputPreprocessor.offload_multimodal_processor.remote(mm_processor, prompt, mm_data, mm_processor_kwargs, return_mm_hashes)
+            return ray.get(mm_inputs)
+        else:
+            return mm_processor.apply(prompt, mm_data, mm_processor_kwargs, return_mm_hashes)
 
     async def _process_multimodal_async(
         self,
@@ -320,8 +325,13 @@ class InputPreprocessor:
                                                          tokenizer=tokenizer)
         if mm_processor_kwargs is None:
             mm_processor_kwargs = {}
-        # return mm_processor.apply(prompt, mm_data, mm_processor_kwargs, return_mm_hashes)
-        mm_inputs = await InputPreprocessor.offload_multimodal_processor.remote(mm_processor, prompt, mm_data, mm_processor_kwargs, return_mm_hashes)
+
+        if self.offload_to_ray:
+            mm_inputs = await InputPreprocessor.offload_multimodal_processor.remote(mm_processor, prompt, mm_data,
+                                                                                    mm_processor_kwargs,
+                                                                                    return_mm_hashes)
+        else :
+            mm_inputs = mm_processor.apply(prompt, mm_data, mm_processor_kwargs, return_mm_hashes)
         return mm_inputs
 
     def _prompt_to_llm_inputs(
