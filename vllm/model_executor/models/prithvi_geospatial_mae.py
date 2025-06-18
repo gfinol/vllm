@@ -312,10 +312,10 @@ class PrithviGeoSpatialMAEMultiModalProcessor(BaseMultiModalProcessor):
         location_coords = mm_data["location_coords"]
 
         if not input_data:
-            input_data, _, location_coords, _ = self.load_example(file_paths=[mm_data["geotiff_path"]], indices=[1,2,3,8,11,12])
+            input_data, _, location_coords, _ = self.load_example(file_paths=[mm_data["geotiff_file"]], indices=[1,2,3,8,11,12])
         # temporal_coords = mm_data["temporal_coords"]
-        datamodule = self.generate_datamodule(config["data"]["class_path"], config["data"]["init_args"])
-        # datamodule = self.generate_datamodule_static()
+        # datamodule = self.generate_datamodule(config["data"]["class_path"], config["data"]["init_args"])
+        datamodule = self.generate_datamodule_static()
         mm_kwargs = self._preprocess(input_data, 512, location_coords, datamodule)
 
         # mm_kwargs = {}
