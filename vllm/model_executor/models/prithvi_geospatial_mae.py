@@ -16,19 +16,22 @@
 # limitations under the License.
 """Inference-only IBM/NASA Prithvi Geospatial model."""
 import copy
-import dict
+import datetime
 import importlib
+import re
 from collections.abc import Iterable, Mapping, Sequence
-from typing import Optional, Set, Tuple, Union
+from io import BytesIO
+from typing import Optional, Set, Tuple, Union, List, Dict
 
 import albumentations
 import numpy as np
+import rasterio
+import requests
 import torch
 import torch.nn as nn
 from einops import rearrange
-from transformers import BatchFeature
 from terratorch.datamodules import Sen1Floods11NonGeoDataModule
-
+from transformers import BatchFeature
 
 from vllm.config import VllmConfig
 from vllm.model_executor.model_loader.weight_utils import default_weight_loader
@@ -47,6 +50,8 @@ from vllm.multimodal.profiling import BaseDummyInputsBuilder
 from vllm.sequence import (IntermediateTensors, PoolerOutput,
                            PoolingSequenceGroupOutput)
 
+NO_DATA = -9999
+NO_DATA_FLOAT = 0.0001
 
 class PrithviGeoSpatialMAEProcessingInfo(BaseProcessingInfo):
 
@@ -205,6 +210,94 @@ class PrithviGeoSpatialMAEMultiModalProcessor(BaseMultiModalProcessor):
 
         return datamodule
 
+    @staticmethod
+    def read_geotiff(file_path: str) -> Tuple[np.ndarray, dict, Tuple[float, float]]:
+        """Read all bands from *file_path* and return image + meta info.
+
+        Args:
+            file_path: path to image file.
+
+        Returns:
+            np.ndarray with shape (bands, height, width)
+            meta info dict
+        """
+
+        if file_path.startswith("http"):
+            response = requests.get(file_path)
+            response.raise_for_status()  # Raise an error for bad responses
+            file = BytesIO(response.content)
+        else:
+            file = file_path
+
+        with rasterio.open(file) as src:
+            img = src.read()
+            meta = src.meta
+            try:
+                coords = src.lnglat()
+            except:
+                # Cannot read coords
+                coords = None
+        return img, meta, coords
+
+    def load_example(
+            self,
+            file_paths: List[str],
+            mean: List[float] = None,
+            std: List[float] = None,
+            indices: Union[list[int], None] = None,
+    ):
+        """Build an input example by loading images in *file_paths*.
+
+        Args:
+            file_paths: list of file paths .
+            mean: list containing mean values for each band in the images in *file_paths*.
+            std: list containing std values for each band in the images in *file_paths*.
+            indices: list of indices to select bands from the images in *file_paths*.
+
+        Returns:
+            np.array containing created example
+            list of meta info for each image in *file_paths*
+        """
+
+        imgs = []
+        metas = []
+        temporal_coords = []
+        location_coords = []
+
+        for file in file_paths[:1]:
+            img, meta, coords = self.read_geotiff(file)
+
+            # Rescaling (don't normalize on nodata)
+            img = np.moveaxis(img, 0, -1)  # channels last for rescaling
+            if indices is not None:
+                img = img[..., indices]
+            if mean is not None and std is not None:
+                img = np.where(img == NO_DATA, NO_DATA_FLOAT, (img - mean) / std)
+
+            imgs.append(img)
+            metas.append(meta)
+            if coords is not None:
+                location_coords.append(coords)
+
+            try:
+                match = re.search(r'(\d{7,8}T\d{6})', file)
+                if match:
+                    year = int(match.group(1)[:4])
+                    julian_day = match.group(1).split('T')[0][4:]
+                    if len(julian_day) == 3:
+                        julian_day = int(julian_day)
+                    else:
+                        julian_day = datetime.datetime.strptime(julian_day, '%m%d').timetuple().tm_yday
+                    temporal_coords.append([year, julian_day])
+            except Exception as e:
+                print(f'Could not extract timestamp for {file} ({e})')
+
+        imgs = np.stack(imgs, axis=0)  # num_frames, H, W, C
+        imgs = np.moveaxis(imgs, -1, 0).astype("float32")  # C, num_frames, H, W
+        imgs = np.expand_dims(imgs, axis=0)
+
+        return imgs, temporal_coords, location_coords, metas
+
     def apply(
         self,
         prompt: Union[str, list[int]],
@@ -213,13 +306,16 @@ class PrithviGeoSpatialMAEMultiModalProcessor(BaseMultiModalProcessor):
         return_mm_hashes: bool = False,
     ) -> MultiModalInputs:
 
-        config = {} # TODO load config from somewhere
-        config = self.info
+        # config = {} # TODO load config from somewhere
+        config = self.info.get_hf_config().to_dict()
         input_data = mm_data["input_data"]
-        # temporal_coords = mm_data["temporal_coords"]
         location_coords = mm_data["location_coords"]
-        # datamodule = self.generate_datamodule(config["data"]["class_path"], config["data"]["init_args"])
-        datamodule = self.generate_datamodule_static()
+
+        if not input_data:
+            input_data, _, location_coords, _ = self.load_example(file_paths=[mm_data["geotiff_path"]], indices=[1,2,3,8,11,12])
+        # temporal_coords = mm_data["temporal_coords"]
+        datamodule = self.generate_datamodule(config["data"]["class_path"], config["data"]["init_args"])
+        # datamodule = self.generate_datamodule_static()
         mm_kwargs = self._preprocess(input_data, 512, location_coords, datamodule)
 
         # mm_kwargs = {}
