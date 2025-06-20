@@ -311,7 +311,7 @@ class PrithviGeoSpatialMAEMultiModalProcessor(BaseMultiModalProcessor):
         input_data = mm_data["input_data"]
         location_coords = mm_data["location_coords"]
 
-        if not input_data:
+        if input_data is None:
             input_data, _, location_coords, _ = self.load_example(file_paths=[mm_data["geotiff_file"]], indices=[1,2,3,8,11,12])
         # temporal_coords = mm_data["temporal_coords"]
         # datamodule = self.generate_datamodule(config["data"]["class_path"], config["data"]["init_args"])
