@@ -1,21 +1,114 @@
 import argparse
 import asyncio
+import datetime
 import json
 import os
+import re
 import time
-from typing import Tuple, Any, AsyncGenerator
+from io import BytesIO
+from typing import Tuple, Any, AsyncGenerator, List, Union
 
 import numpy as np
+import rasterio
+import requests
 import torch
 
 from vllm import AsyncEngineArgs, PoolingRequestOutput, PoolingParams
 from vllm.engine.async_llm_engine import AsyncLLMEngine
 
+NO_DATA = -9999
+NO_DATA_FLOAT = 0.0001
 
-async def encode(engine: AsyncLLMEngine, geotiff_file: str, req_id, extra_data: int = 0) -> tuple[
+def read_geotiff(file_path: str) -> Tuple[np.ndarray, dict, Tuple[float, float]]:
+    """Read all bands from *file_path* and return image + meta info.
+
+    Args:
+        file_path: path to image file.
+
+    Returns:
+        np.ndarray with shape (bands, height, width)
+        meta info dict
+    """
+
+    if file_path.startswith("http"):
+        response = requests.get(file_path)
+        response.raise_for_status()  # Raise an error for bad responses
+        file = BytesIO(response.content)
+    else:
+        file = file_path
+
+    with rasterio.open(file) as src:
+        img = src.read()
+        meta = src.meta
+        try:
+            coords = src.lnglat()
+        except:
+            # Cannot read coords
+            coords = None
+    return img, meta, coords
+
+def load_example(
+        file_paths: List[str],
+        mean: List[float] = None,
+        std: List[float] = None,
+        indices: Union[list[int], None] = None,
+):
+    """Build an input example by loading images in *file_paths*.
+
+    Args:
+        file_paths: list of file paths .
+        mean: list containing mean values for each band in the images in *file_paths*.
+        std: list containing std values for each band in the images in *file_paths*.
+        indices: list of indices to select bands from the images in *file_paths*.
+
+    Returns:
+        np.array containing created example
+        list of meta info for each image in *file_paths*
+    """
+
+    imgs = []
+    metas = []
+    temporal_coords = []
+    location_coords = []
+
+    for file in file_paths[:1]:
+        img, meta, coords = read_geotiff(file)
+
+        # Rescaling (don't normalize on nodata)
+        img = np.moveaxis(img, 0, -1)  # channels last for rescaling
+        if indices is not None:
+            img = img[..., indices]
+        if mean is not None and std is not None:
+            img = np.where(img == NO_DATA, NO_DATA_FLOAT, (img - mean) / std)
+
+        imgs.append(img)
+        metas.append(meta)
+        if coords is not None:
+            location_coords.append(coords)
+
+        try:
+            match = re.search(r'(\d{7,8}T\d{6})', file)
+            if match:
+                year = int(match.group(1)[:4])
+                julian_day = match.group(1).split('T')[0][4:]
+                if len(julian_day) == 3:
+                    julian_day = int(julian_day)
+                else:
+                    julian_day = datetime.datetime.strptime(julian_day, '%m%d').timetuple().tm_yday
+                temporal_coords.append([year, julian_day])
+        except Exception as e:
+            print(f'Could not extract timestamp for {file} ({e})')
+
+    imgs = np.stack(imgs, axis=0)  # num_frames, H, W, C
+    imgs = np.moveaxis(imgs, -1, 0).astype("float32")  # C, num_frames, H, W
+    imgs = np.expand_dims(imgs, axis=0)
+
+    return imgs, temporal_coords, location_coords, metas
+
+async def encode(engine: AsyncLLMEngine, geotiff_file: str, req_id, extra_data: int = 0, input_data =None, location_coords=None) -> tuple[
     Any, int, AsyncGenerator[PoolingRequestOutput, None]]:
-    mm_data = {"pixel_values": None, "location_coords": torch.empty(0), "temporal_coords": torch.empty(0),
-               "geotiff_file": geotiff_file, "extra_data": extra_data, "input_data": None}
+    mm_data = {"pixel_values": None, "location_coords": location_coords, "temporal_coords": torch.empty(0),
+               "geotiff_file": None, "extra_data": extra_data, "input_data": input_data}
 
     prompt = {
         "prompt_token_ids": [1],
@@ -38,8 +131,10 @@ async def uniform_throughput(engine: AsyncLLMEngine, queue: asyncio.Queue, geoti
         num_req: Number of requests to send.
         rps: Requests per second.
     """
+    input_data, _, location_coords, _ = load_example(file_paths=[geotiff_file],
+                                                     indices=[1, 2, 3, 8, 11, 12])
     for req_id in range(num_req):
-        queue_element = asyncio.create_task(encode(engine, geotiff_file, req_id, extra_data))
+        queue_element = asyncio.create_task(encode(engine, geotiff_file, req_id, extra_data, input_data=input_data, location_coords=location_coords))
         await queue.put(queue_element)
         await asyncio.sleep(1.0 / rps)
 
