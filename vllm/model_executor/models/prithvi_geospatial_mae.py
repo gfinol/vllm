@@ -45,7 +45,7 @@ from vllm.multimodal.inputs import (MultiModalDataDict, MultiModalFieldConfig,
                                     MultiModalInputs, MultiModalKwargs)
 from vllm.multimodal.parse import MultiModalDataItems
 from vllm.multimodal.processing import (BaseMultiModalProcessor,
-                                        BaseProcessingInfo, PromptUpdate)
+                                        BaseProcessingInfo, PromptUpdate, ProcessingCache)
 from vllm.multimodal.profiling import BaseDummyInputsBuilder
 from vllm.sequence import (IntermediateTensors, PoolerOutput,
                            PoolingSequenceGroupOutput)
@@ -80,6 +80,11 @@ class PrithviGeoSpatialMAEInputBuilder(
 
 
 class PrithviGeoSpatialMAEMultiModalProcessor(BaseMultiModalProcessor):
+
+    def __init__(self, info, dummy_inputs: "BaseDummyInputsBuilder[_I]", cache: Optional[ProcessingCache] = None,
+                 enable_sanity_checks: bool = True):
+        super().__init__(info, dummy_inputs, cache=cache, enable_sanity_checks=enable_sanity_checks)
+        self.datamodule = self.generate_datamodule_static()
 
     def _get_mm_fields_config(
         self,
@@ -315,8 +320,8 @@ class PrithviGeoSpatialMAEMultiModalProcessor(BaseMultiModalProcessor):
             input_data, _, location_coords, _ = self.load_example(file_paths=[mm_data["geotiff_file"]], indices=[1,2,3,8,11,12])
         # temporal_coords = mm_data["temporal_coords"]
         # datamodule = self.generate_datamodule(config["data"]["class_path"], config["data"]["init_args"])
-        datamodule = self.generate_datamodule_static()
-        mm_kwargs = self._preprocess(input_data, 512, location_coords, datamodule)
+        # datamodule = self.generate_datamodule_static()
+        mm_kwargs = self._preprocess(input_data, 512, location_coords, self.datamodule)
 
         # mm_kwargs = {}
         # for k, v in mm_data.items():
