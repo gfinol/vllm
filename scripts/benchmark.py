@@ -108,7 +108,7 @@ def load_example(
 async def encode(engine: AsyncLLMEngine, geotiff_file: str, req_id, extra_data: int = 0, input_data =None, location_coords=None) -> tuple[
     Any, int, AsyncGenerator[PoolingRequestOutput, None]]:
     mm_data = {"pixel_values": None, "location_coords": location_coords, "temporal_coords": torch.empty(0),
-               "geotiff_file": None, "extra_data": extra_data, "input_data": input_data}
+               "geotiff_file": geotiff_file, "extra_data": extra_data, "input_data": input_data}
 
     prompt = {
         "prompt_token_ids": [1],
@@ -120,7 +120,7 @@ async def encode(engine: AsyncLLMEngine, geotiff_file: str, req_id, extra_data: 
     outputs = engine.encode(prompt, pooling_params, req_id)
     return req_id, start_time, outputs
 
-async def uniform_throughput(engine: AsyncLLMEngine, queue: asyncio.Queue, geotiff_file: str, num_req: int, rps: int, extra_data: int = 0):
+async def uniform_throughput(engine: AsyncLLMEngine, queue: asyncio.Queue, geotiff_file: str, num_req: int, rps: int, extra_data: int = 0, send_np_array: bool = False) -> None:
     """
     Send requests to the queue at a uniform rate of rps (requests per second).
 
@@ -131,8 +131,14 @@ async def uniform_throughput(engine: AsyncLLMEngine, queue: asyncio.Queue, geoti
         num_req: Number of requests to send.
         rps: Requests per second.
     """
-    input_data, _, location_coords, _ = load_example(file_paths=[geotiff_file],
+    if send_np_array:
+        input_data, _, location_coords, _ = load_example(file_paths=[geotiff_file],
                                                      indices=[1, 2, 3, 8, 11, 12])
+        geotiff_file = None
+    else:
+        input_data = None
+        location_coords = None
+
     for req_id in range(num_req):
         queue_element = asyncio.create_task(encode(engine, geotiff_file, req_id, extra_data, input_data=input_data, location_coords=location_coords))
         await queue.put(queue_element)
@@ -156,7 +162,7 @@ async def benchmark(num_req: int, engine: AsyncLLMEngine, data_size: int, rps: i
     results_task = asyncio.create_task(process_outputs(queue, args.num_req))
 
     print("Starting benchmarking...")
-    await uniform_throughput(engine, queue, geotiff_file, num_req, rps, data_size)
+    await uniform_throughput(engine, queue, geotiff_file, num_req, rps, data_size, args.send_np_array)
 
     results = await results_task
     print("Benchmarking completed.")
@@ -281,6 +287,7 @@ def parse_args():
     parser.add_argument("--ray-pip-requirements", type=str, help="Path to the Ray Pip requirements file", default="requirements.txt")
     parser.add_argument("--ray-deployment-name", type=str, help="Name of the Ray deployment", default="geoserve-benchmark")
     parser.add_argument("--extra-data-size", type=int, help="Extra data size to be passed (in bytes)", default=0)
+    parser.add_argument("--send-np-array", action="store_true", help="Send numpy array instead of bytes")
 
     # Arguments that modify the behavior of the preprocessor
     parser.add_argument("--sleep_distribution", type=str, help="Sleep time distribution", choices=["fixed", "uniform"], default="fixed")
