@@ -17,6 +17,7 @@ from vllm.multimodal.inputs import (MultiModalDataDict, MultiModalEncDecInputs,
                                     MultiModalInputs)
 from vllm.prompt_adapter.request import PromptAdapterRequest
 from vllm.transformers_utils.tokenizer_group import BaseTokenizerGroup
+from vllm.offload_args import get_sleep_time_function, get_add_sleep_time, get_offload_to_ray
 
 from .data import (DecoderOnlyInputs, EncoderDecoderInputs, ProcessorInputs,
                    PromptType, SingletonInputs, SingletonPrompt, token_inputs)
@@ -39,7 +40,9 @@ class InputPreprocessor:
         self.model_config = model_config
         self.tokenizer = tokenizer
         self.mm_registry = mm_registry
-        self.offload_to_ray = os.getenv("VLLM_OFFLOAD_TO_RAY", "0") != "0"
+        self.offload_to_ray = get_offload_to_ray()
+        self.add_sleep_time = get_add_sleep_time()
+        self.get_sleep_time = get_sleep_time_function()
 
     def get_tokenizer_group(self) -> BaseTokenizerGroup:
         if self.tokenizer is None:
@@ -296,10 +299,21 @@ class InputPreprocessor:
 
         logger.info("Calling multi-modal processor from _process_multimodal function in InputPreprocessor")
 
+        if self.add_sleep_time:
+            sleep_seconds = self.get_sleep_time()
+        else:
+            sleep_seconds = 0
+
         if self.offload_to_ray:
-            mm_inputs = InputPreprocessor.offload_multimodal_processor.remote(mm_processor, prompt, mm_data, mm_processor_kwargs, return_mm_hashes)
+            mm_inputs = InputPreprocessor.offload_multimodal_processor.remote(mm_processor,
+                                                                              prompt, mm_data,
+                                                                              mm_processor_kwargs,
+                                                                              return_mm_hashes,
+                                                                              sleep_seconds)
             return ray.get(mm_inputs)
         else:
+            if sleep_seconds:
+                time.sleep(sleep_seconds)
             return mm_processor.apply(prompt, mm_data, mm_processor_kwargs, return_mm_hashes)
 
     async def _process_multimodal_async(
@@ -326,11 +340,25 @@ class InputPreprocessor:
         if mm_processor_kwargs is None:
             mm_processor_kwargs = {}
 
+        if self.add_sleep_time:
+            sleep_seconds = self.get_sleep_time()
+        else:
+            sleep_seconds = 0
+
         if self.offload_to_ray:
+            print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
+            print(f"mm_data: {mm_data}")
+            print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
+
             mm_inputs = await InputPreprocessor.offload_multimodal_processor.remote(mm_processor, prompt, mm_data,
                                                                                     mm_processor_kwargs,
-                                                                                    return_mm_hashes)
+                                                                                    return_mm_hashes, sleep_seconds)
+            print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
+            print(f"mm_inputs: {mm_inputs}")
+            print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
         else :
+            if sleep_seconds:
+                time.sleep(sleep_seconds)
             mm_inputs = mm_processor.apply(prompt, mm_data, mm_processor_kwargs, return_mm_hashes)
         return mm_inputs
 
