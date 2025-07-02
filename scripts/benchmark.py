@@ -8,6 +8,7 @@ import time
 from io import BytesIO
 from typing import Tuple, Any, AsyncGenerator, List, Union
 
+import ray
 import numpy as np
 import rasterio
 import requests
@@ -256,6 +257,7 @@ async def main(arg: argparse.Namespace):
 
     # Initialize Ray
     # ray.init(address=arg.ray_address, runtime_env={"pip": arg.ray_pip_requirements, "env_vars": {"HF_HOME": "/data/gfinol/huggingface"}})
+    ray.init(address=arg.ray_address, runtime_env={"env_vars": {"HF_HOME": "/data/gfinol/huggingface"}})
     # ray.init(address=args.ray_address, runtime_env={"image_uri": "icr.io/drl-nextgen/vllm/ad-orchestrator-gpu-0.8.1-vllm", "env_vars": {"HF_HOME": "/data/gfinol/huggingface"}})
 
     # Create a Ray Serve deployment
