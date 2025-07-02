@@ -180,7 +180,7 @@ class LLMEngine:
                 and not isinstance(output, output_type)):
             raise TypeError(f"Expected output of type {output_type}, "
                             f"but found type {type(output)}")
-
+        print(f"#GFINOL#-end_encode:{time.time_ns()}")
         return cast(_O, output)
 
     @classmethod

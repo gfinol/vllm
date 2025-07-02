@@ -957,7 +957,7 @@ class AsyncLLMEngine(EngineClient):
             prompt_adapter_request=prompt_adapter_request,
             priority=priority,
         )
-
+        print(f"#GFINOL#-end_add_request:{time.time_ns()}")
         return stream.generator()
 
     async def generate(
@@ -1122,6 +1122,7 @@ class AsyncLLMEngine(EngineClient):
             >>> # Process and return the final output
             >>> ...
         """
+        print(f"#GFINOL#-start_encode:{time.time_ns()}")
         try:
             async for output in await self.add_request(
                     request_id,

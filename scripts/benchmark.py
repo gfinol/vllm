@@ -279,7 +279,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Benchmarking script")
     parser.add_argument("--ray-address", type=str, help="Ray cluster address", default="ray://localhost:10001")
     parser.add_argument("--num-req", type=int, help="Number of inferences to run", default=10)
-    parser.add_argument("--data-size", type=int, help="Size of data to be passed (in bytes)", default=1 * 1024 * 1024)
+    parser.add_argument("--data-size", type=int, help="Size of data to be passed (in bytes)", default=0)
     parser.add_argument("--sleep-time", type=float, help="Sleep time in preprocessing (seconds)", default=0.0)
     parser.add_argument("--rps", type=int, help="Requests per second", default=1)
     parser.add_argument("--geotiff-file", type=str, help="Path or URL to the GeoTIFF file", required=True)

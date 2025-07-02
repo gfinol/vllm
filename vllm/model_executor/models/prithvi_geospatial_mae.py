@@ -19,6 +19,7 @@ import copy
 import datetime
 import importlib
 import re
+import time
 from collections.abc import Iterable, Mapping, Sequence
 from io import BytesIO
 from typing import Optional, Set, Tuple, Union, List, Dict
@@ -271,7 +272,7 @@ class PrithviGeoSpatialMAEMultiModalProcessor(BaseMultiModalProcessor):
 
         for file in file_paths[:1]:
             img, meta, coords = self.read_geotiff(file)
-
+            print(f"#GFINOL#-geotiff_read:{time.time_ns()}")
             # Rescaling (don't normalize on nodata)
             img = np.moveaxis(img, 0, -1)  # channels last for rescaling
             if indices is not None:
@@ -310,6 +311,7 @@ class PrithviGeoSpatialMAEMultiModalProcessor(BaseMultiModalProcessor):
         hf_processor_mm_kwargs: Mapping[str, object],
         return_mm_hashes: bool = False,
     ) -> MultiModalInputs:
+        print(f"#GFINOL#-start_preprocessor:{time.time_ns()}")
 
         # config = {} # TODO load config from somewhere
         config = self.info.get_hf_config().to_dict()
@@ -318,6 +320,8 @@ class PrithviGeoSpatialMAEMultiModalProcessor(BaseMultiModalProcessor):
 
         if input_data is None:
             input_data, _, location_coords, _ = self.load_example(file_paths=[mm_data["geotiff_file"]], indices=[1,2,3,8,11,12])
+        print(f"#GFINOL#-geotiff_load:{time.time_ns()}")
+
         # temporal_coords = mm_data["temporal_coords"]
         # datamodule = self.generate_datamodule(config["data"]["class_path"], config["data"]["init_args"])
         # datamodule = self.generate_datamodule_static()
@@ -326,7 +330,7 @@ class PrithviGeoSpatialMAEMultiModalProcessor(BaseMultiModalProcessor):
         # mm_kwargs = {}
         # for k, v in mm_data.items():
         #     mm_kwargs[k] = v
-
+        print(f"#GFINOL#-end_preprocessor:{time.time_ns()}")
         return MultiModalInputs(
             type="multimodal",
             prompt=prompt,
@@ -409,6 +413,7 @@ class PrithviGeoSpatialMAE(nn.Module, IsAttentionFree, SupportsMultiModal,
         inputs_embeds: Optional[torch.Tensor] = None,
         **kwargs: object,
     ):
+        print(f"#GFINOL#-start_forward:{time.time_ns()}")
 
         pixel_values, location_coords = (
             self._parse_and_validate_multimodal_data(**kwargs))
@@ -418,9 +423,10 @@ class PrithviGeoSpatialMAE(nn.Module, IsAttentionFree, SupportsMultiModal,
         w1 = kwargs.pop("w1", 1)
         original_h = kwargs.pop("original_h", 512)
         original_w = kwargs.pop("original_w", 512)
-
+        print(f"#GFINOL#-start_inference:{time.time_ns()}")
         model_output = self.model(pixel_values,
                                   location_coords=location_coords)
+        print(f"#GFINOL#-end_inference:{time.time_ns()}")
 
         pred_imgs = []
 
@@ -451,7 +457,7 @@ class PrithviGeoSpatialMAE(nn.Module, IsAttentionFree, SupportsMultiModal,
 
         # Squeeze (batch size 1)
         pred_imgs = pred_imgs[0]
-
+        print(f"#GFINOL#-end_forward:{time.time_ns()}")
         return pred_imgs
 
     def pooler(
