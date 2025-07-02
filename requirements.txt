@@ -1,0 +1,12 @@
+ray[serve]==2.46.0
+rasterio~=1.4.3
+albumentations~=1.4.6
+terratorch==0.99.9
+
+numpy
+aiohttp
+requests
+torch
+einops
+matplotlib
+PyYAML
